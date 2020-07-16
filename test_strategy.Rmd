@@ -1,41 +1,41 @@
 ---
 title: "testing_strategy"
 author: "Quoc Dinh Nguyen"
-date: "June 5, 2020"
+date: "July 16, 2020"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(fig.width=10.5, fig.height=6) 
+knitr::opts_chunk$set(fig.width=9, fig.height=5) 
 library(tidyverse)
 library(furrr)
 library(tictoc)
 theme_set(theme_minimal())
 ```
 
-## Parameters // these specific values not used in simulating - for indicative purposes
-nsim            <- 100        # Number of simulations
+## Parameters // these specific values not used in simulation - for indicative purposes
+nsim            <- 1000       # Number of simulations
 n               <- 280        # Population size (common denominator of all test strategy lengths)
 latency         <- 3          # Latency of 1 translates into contagiousness for the day following infection (minimum latency of 1 for this code)
-dayinfectious   <- 8
-r0              <- 4
-probimport      <- 0          # Probability of importing one case per person // Play with this to simulation random importation
+dayinfectious   <- 7
+r0              <- 3
+probimport      <- 0.000036   # Probability of importing one case per person // Play with this to simulation random importation
 diagtimepos     <- 14         # Days where test will remain positive after latency
 dayoftest       <- c(0,7)     # Days of testing (week goes from 0 to 6)
 stopatdiag      <- 1          # Number of diagnosis at which to stop
-randomteststart <- 1
-infectstart1    <- 0          # Start with one person infected day 1
+randomteststart <- 1          # Randomize day of introduction in relation to testing start day
+infectstart1    <- 1          # Start with one person infected day 1
 
 ## Testing strategy simulation function
 ```{r}
-testStratSim <- function(nsim = 10, n = 280, latency = 3, dayinfectious = 7, r0 = 2, probimport = 0, 
+testStratSim <- function(nsim = 1000, n = 280, latency = 3, dayinfectious = 7, r0 = 3, probimport = 0.000036, 
                          dayoftest, diagtimepos = 14, stopatdiag = 1, sensitivity = 1, randomteststart = 1, infectstartt1 = 1, qweek = 0, bootstrap = 0, seed = 2019){
    set.seed(seed)
    res <- res_temp <- NULL
 
       for (i in 1:nsim){
-       dayoftest <- (unlist(dayoftest) + floor(runif(1)*14)*randomteststart) %% 14    # Randomize start day of the week
+       dayoftest <- (unlist(dayoftest) + floor(runif(1)*14)*randomteststart) %% 14             # Randomize start day of the week if randomteststart==1
        if (qweek==2) {bweek <- 1} else {bweek <- 0}
        df <- matrix(nrow = n,
                     data = c(1:n,
@@ -101,7 +101,7 @@ testStratSim <- function(nsim = 10, n = 280, latency = 3, dayinfectious = 7, r0 
 }
 ```
 
-## Scenarios for first article
+## Scenarios
 ```{r}
 # Base scenarios (14)
 scen1 <- tibble(qweek     = 0,
@@ -128,58 +128,32 @@ scen <- scen %>% mutate(nsim          = 1000,
                         diagtimepos   = 14,
                         sensitivity   = 0.9)
 
-# High probimport
+# Secondary analyses
 scen_high_probimport  <-           scen %>% mutate(probimport = 0.000714)
-
-# Sensitivity analyses (98)
-scen_sens_latency     <- bind_rows(#scen %>% mutate(latency = 2),
-                                   scen %>% mutate(latency = 5))
-
+scen_sens_latency     <-           scen %>% mutate(latency = 5)
 scen_sens_r0          <- bind_rows(scen %>% mutate(r0 = 1.5),
                                    scen %>% mutate(r0 = 2),
                                    scen %>% mutate(r0 = 5))
-
-#scen_sens_diagtimepos <-           scen %>% mutate(diagtimepos = 7) 
-
 scen_sens_sens        <- bind_rows(scen %>% mutate(sensitivity = 0.75),
                                    scen %>% mutate(sensitivity = 1))
 
 # Full scenarios (7 tests strategies x 8 sets of parameters)
-#scen <- bind_rows(scen, scen_high_probimport, scen_sens_latency) # Run 3 of 8
-#scen <- scen_sens_r0                                              # Run 3 of 8
-scen <- scen_sens_sens                                           # Run remaining 2 of 8
+scen <- bind_rows(scen, scen_high_probimport, scen_sens_latency,scen_sens_r0, scen_sens_sens) 
 ```
 
-##Run simulation 
+## Run simulation 
 ```{r}
-# Time and progression markers for simulation
-completed_scen <- 0
-start_time     <- proc.time()
-
-# Run simulation // for 63 scenarios, nsim = 50 ~ 27 min 
 tic()
 future::plan(multiprocess)                                                              # Parallel processing using furrr for purrr::pmap
 df_temp <- scen %>% mutate(results = future_pmap(scen, testStratSim, .progress = T))    # future_pmap is furrr's parallel version of pmap (~2-3x faster)
 toc()
 df_ress <- df_temp %>% unnest(results) 
-df_ress <- df_ress %>% rowwise %>% mutate(freqtest = length(unlist(dayoftest)))           # Unlist day of test to frequency of test
-
+df_ress <- df_ress %>% rowwise %>% mutate(freqtest = length(unlist(dayoftest)))         # Unlist day of test to frequency of test
 ```
 
-## Keep simulation results
+## Results - Table
 ```{r}
-df_res20200715.2 <- df_ress # 2 of 8 scenarios, nsim=1000
-df_res20200715.1 # 3 of 8 scenarios, nsim=1000
-df_res20200714 # First 3 of 8 scenarios, nsim=1000
-df_res20200709 # 7 scenarios, nsim=250, seed=2019
-df_res20200708
-```
-
-## Table
-```{r}
-df_ress <- bind_rows(df_res20200714, df_res20200715.1, df_res20200715.2) 
-
-# Simplify col names
+# Clean column names and clean dataset
 df_res <- df_ress %>% group_by(qweek, freqtest) %>% 
    mutate(strategy = paste0(freqtest, "-", qweek) %>% fct_recode(
       `1. 100% every 14 days` = "1-0",
@@ -190,6 +164,7 @@ df_res <- df_ress %>% group_by(qweek, freqtest) %>%
       `6. 14% daily`          = "14-1",
       `7. 100% biweekly`      = "2-2"
    ))
+
 df_res <- df_res %>% group_by(r0, latency, probimport, sensitivity) %>% 
    mutate(parameters = paste(r0, latency, probimport, sensitivity, sep="-")) %>% ungroup
 df_res <- df_res %>% mutate(parameters = fct_relevel(parameters, c("3-3-0.000714-0.9", "5-3-3.6e-05-0.9", "3-3-3.6e-05-0.75",
@@ -206,18 +181,14 @@ df_res <- df_res %>% select(parameters, strategy, end_time, time_to_end, infecte
 
 # Summary results
 df_summ <- df_res %>% group_by(parameters, strategy) %>% 
-   summarise(#mean_end_time     = mean(end_time),
-             #min_end_time      = min(end_time),
+   summarise(mean_end_time     = mean(end_time),
              mean_time_to_end  = mean(time_to_end) %>% round(1),
              median_time_to_end  = median(time_to_end) %>% round(1),
-             #sd_time_to_end    = sd(time_to_end) %>% round(1),
-             #min_time_to_end   = min(time_to_end),
              max_time_to_end   = max(time_to_end),
              iqr_time_to_end   = quantile(time_to_end,0.75) - quantile(time_to_end, 0.25),
              mean_infected_end = mean(infected_end) %>% round(1),
              median_infected_end = median(infected_end) %>% round(1),
              sd_infected_end   = sd(infected_end) %>% round(1),
-             #min_infected_end  = min(infected_end),
              iqr_infected_end  = quantile(infected_end,0.75) - quantile(time_to_end, 0.25),
              mean_tests_done   = mean(tests_done) %>% round(0),
              sd_tests_done     = sd(tests_done) %>% round(0),
@@ -229,20 +200,21 @@ df_summ <- df_res %>% group_by(parameters, strategy) %>%
 df_summ
 ```
 
-## Figures
+## Results - Figures
 ```{r}
 # Geom_boxplots
-## Main results
-df_text <- df_res %>% group_by(strategy, parameters) %>% 
-   summarise(label_mean_time_to_end  = mean(time_to_end) %>% round(2),
-             label_mean_infected_end = mean(infected_end) %>% round(2),
-             label_mean_tests_done = mean(tests_done) %>% round(0))
-
+## Function for quantiles
 f <- function(x) {
   r <- quantile(x, c(0.1, 0.25, 0.5, 0.75, 0.9), na.rm=T)
   names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
   r
 }
+
+## Primary analyses
+df_text <- df_res %>% group_by(strategy, parameters) %>% 
+   summarise(label_mean_time_to_end  = mean(time_to_end) %>% round(2),
+             label_mean_infected_end = mean(infected_end) %>% round(2),
+             label_mean_tests_done = mean(tests_done) %>% round(0))
 
 f1 <- ggplot(df_res %>% filter(parameters == "Primary scenario"), 
        aes(x=fct_reorder(strategy, desc(strategy)), y=infected_end)) +
@@ -262,7 +234,7 @@ f1 <- ggplot(df_res %>% filter(parameters == "Primary scenario"),
 
 ggsave("Figure1.png", f1, width=9, height=5)
 
-## Sensitivity analyses
+## Secondary analyses
 df_text_sens <- df_res %>% group_by(strategy) %>% 
    summarise(label_mean_time_to_end  = mean(time_to_end) %>% round(2),
              label_mean_infected_end = mean(infected_end) %>% round(2),
@@ -287,260 +259,4 @@ f2 <- ggplot(df_res,
    annotate("point", x = 1, y = 33, color="black", shape=21, stroke=1.2, size=3, fill="darkblue", alpha=0.6)
 
 ggsave("Figure2.png", f2, width=9, height=5)
-
-# Geom_bars
-df_plot <- df_res
-df_plot <- df_plot %>% group_by(qweek, freqtest, probimport) %>%    # Used to plot vlines for mean
-  mutate(mean_time_to_end  = mean(time_to_end),
-         mean_infected_end = mean(infected_end))
-
-df_text <- df_plot %>% group_by(qweek, freqtest, probimport) %>% 
-   summarise(label_mean_time_to_end  = mean(time_to_end) %>% round(2),
-             label_mean_infected_end = mean(infected_end) %>% round(2))
-
-# Time to end
-ggplot(df_plot, aes(x=time_to_end, fill=factor(qweek))) + 
-   geom_bar() +
-   xlim(0,30) +
-   geom_vline(aes(xintercept = mean_time_to_end )) +
-   geom_text(data = df_text, aes(label = label_mean_time_to_end, y = 150, x=15)) +
-   facet_grid(vars(freqtest), vars(probimport,qweek)) 
-
-
-# Cases at end
-ggplot(df_plot, aes(x=infected_end, fill=factor(qweek))) + 
-   geom_bar() +
-   xlim(0,20) +
-   geom_vline(aes(xintercept = mean_infected_end )) +
-   geom_text(data = df_text, aes(label = label_mean_infected_end, y = 200, x=15)) +
-   facet_grid(vars(freqtest), vars(probimport,qweek)) 
-```
-
-*** STOP THERE CHARLOTTE, BELOW IS ALL TENTATIVE! ***
-
-## Results and plots
-### 1. Overall bar plots for time to diagnosis
-```{r}
-
-```
-
-### 2. Overall violin plots for time to diagnosis
-```{r}
-ggplot(df_res, aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,60) +
-   labs(title = "Days to first diagnosis according to test frequency, days infectious, latency, and R0",
-        subtitle = "Horizontal facet: R0\nVertical facet: Latency (days)",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(vars(r0), vars(latency))
-```
-### 3. Overall violin plots for cases at first diagnosis
-```{r}
-ggplot(df_res, aes(x=factor(freqtest), y=infected_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,50) +
-   labs(title = "Cases at first diagnosis according to test frequency, days infectious, latency, and R0",
-        subtitle = "Horizontal facet: R0\nVertical facet: Latency (days)",
-        x = "Testing strategy, days per 14 days",
-        y = "Cases at first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(vars(r0), vars(latency))
-```
-### 4. Simplest case: single case at start, no transmission/interdependence (R0=0), low latency (1), long duration of infectiousness
-No difference between strategies and no difference by day infectious. There is no interdependence which could favor a more frequent strategy.
-
-As demonstrated by violin plots
-```{r}
-ggplot(df_res %>% filter(r0==0, latency==1), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   labs(title = "Days to first diagnosis according to test frequency, days infectious, latency=1, and R0=0",
-        subtitle = "Vertical facet: Days infectious",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(cols=vars(dayinfectious))
-```
-### 5. More frequent sampling yields smaller average
-As demonstrated by violin plots below, e.g.: 
-* With latency=8 and R0=4, for testing strategy 1/14 vs 2/14
-* With latency=3 and R0=4, for testing strategy 2/14 vs 6/14
-```{r}
-ggplot(df_res %>% filter(latency==3), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,30) +
-   labs(title = "Days to first diagnosis according to test frequency, days infectious, and R0",
-        subtitle = "Horizontal facet: R0\nVertical facet: Latency of 3 days",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(vars(r0), vars(dayinfectious)) + theme_minimal()
-```
-### 6. Spread of the distribution of time to diagnosis has an impact on the number of cases at first diagnosis
-```{r}
-ggplot(df_res %>% filter(latency==3, dayinfectious==2, r0==4, freqtest==1),
-       aes(x=time_to_end, y=infected_end)) +
-   geom_point(alpha=0.2) +
-   geom_smooth() +
-   labs(title = "Days to first diagnosis using 1/14 testing",
-     subtitle = "Latency of 3 days\nDay infectious: 2\nR0=4\nLOESS fit",
-     x = "Time to first diagnosis, days",
-     y = "Cases at first diagnosis")
-```
-The linear increase in time to first diagnosis has an exponential increase in cases at first diagnosis. Using the above parameters, a shorter spread of time to diagnosis (above and beyond average time) will reduce the number of cases.
-
-### 7. Back to more sanpling yields smaller averages (5)
-But why does the decrease in average occur at those specific parameter combinations?
-The existence of thresholds is related to time to break up cycles, so:
-1. Transmission is needed (there needs to be cycles to be broken up!)
-2. A strategy must "break" cycles of transmission to yield benefits
-
-As demonstrated by violin plots below, no benefit when R0=0
-```{r}
-ggplot(df_res %>% filter(r0==0), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-  # ylim(0,20) +
-   labs(title = "Days to first diagnosis according to test frequency",
-        subtitle = "R0=0",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious")
-```
-But starting at R0=1, benefit perceptible for short days of infectiousness, short lag:
-* Only for days infectious = 2, lag = 1, we see a difference between 1/14 and 2/14
-```{r}
-ggplot(df_res %>% filter(r0==1), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,20) +
-   labs(title = "Days to first diagnosis according to test frequency",
-        subtitle = "R0=1\nLatency of 1 day",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious")
-```
-At R0=2, for days infectious=2, the benefit comparing 1/14 and 2/14 is much clearer, will the remaining parameters the same.
-At R0=4, for days infections=2,the benefit also occurs between 2/14 and 6/14.
-At R0=4, there is now also benefit comparing 1/14 and 2/14 for days infections=8
-```{r}
-ggplot(df_res %>% filter(r0 %in% c(2,4)), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,35) +
-   labs(title = "Days to first diagnosis according to test frequency",
-        subtitle = "Vertical facet: R0\nLatency of 1 day",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(cols=vars(r0))
-```
-Why is it so? Part of the answer is this: 
-* If a testing strategy breaks into a cycle of transmission, it will provide benefits. The longer the cycle (serial generation time), the longer one can do without testing without penalty; the shorter the cycle, the more frequent one should test.
-* Once a cycle is broken, there is no added benefit to break it further (i.e. to test more frequently) on the *average*. When comparing 10/14 vs 14/14, the maximal difference between those two strategies is 2 days (5 days in a row 2 days off, twice, for 10/14).
-** Under our simulation parameters, because we end the simulation at the first diagnosis, the incremental benefit on the exponential growth, comparing 14/14 vs 10/14 never obtains
-
-The importance of the length of each cycle can be strengthened by looking at various latency times, holding other parameters equal (R0=4, days infectious=2).
-We can see below that the benefit between 2/14 and 6/14 is greatly reduced when latency is 9 days.
-```{r}
-ggplot(df_res %>% filter(r0==4), aes(x=factor(freqtest), y=time_to_end)) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   #ylim(0,15) +
-   labs(title = "Days to first diagnosis according to test frequency",
-        subtitle = "R0=4\nVertical facet: Latency (days)",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious") +
-   facet_grid(cols=vars(latency), rows=vars(dayinfectious))
-
-
-ggplot(df_res %>% filter(r0==4, dayinfectious==2, latency==1), aes(x=factor(freqtest), y=time_to_end)) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   #ylim(0,15) +
-   labs(title = "Days to first diagnosis according to test frequency",
-        subtitle = "R0=4\nVertical facet: Latency (days)",
-        x = "Testing strategy, days per 14 days",
-        y = "Days to first diagnosis",
-        fill = "Days infectious")
-```
-If you don't like violin plots, let these bar two bar charts convince you.
-Looking across (similar ), there is no apparent 
-```{r}
-ggplot(df_res %>% filter(latency==3, dayinfectious==2), 
-       aes(x=time_to_end)) +
-   geom_bar() +
-   facet_grid(vars(r0),vars(freqtest))
-```
-But we're not really done yet...
-
-_TODO:
-1. Infectiousness to 1 day only (clean cycles to break)
-2. Import probability, but no transmission
-3. Time to 2 diagnoses
-4. Do bootstrap sampling
-
-```{r}
-# What we could visualize:
-## Frequency plots of time_to_end AND infected_end
-## Vs Scatterplot of mean and sd of time_to_end AND mean of infected_end 
-
-### Stratification (or y) by r0, testing strategy, random start, lag period
-#### That's a total of 80 scenarios cannot all be on the same page
-
-
-# Assess relation between testing strategy results with other stratification variables
-
-# FUN
-ggplot(df_res %>% filter(latency==3, dayinfectious==2), 
-       aes(x=time_to_end)) +
-   geom_bar() +
-   facet_grid(vars(r0),vars(freqtest))
-
-ggplot(df_res %>% filter(latency==1, dayinfectious==8), 
-       aes(x=time_to_end)) +
-   geom_bar() +
-   facet_grid(vars(freqtest), vars(r0))
-
-ggplot(df_res %>% filter(latency==1), 
-       aes(x=infected_end, fill=factor(dayinfectious))) +
-   geom_bar(position = position_dodge2(preserve="single")) +
-   facet_grid(vars(freqtest), vars(r0))
-
-ggplot(df_res %>% filter(latency==3), 
-       aes(x=infected_end, fill=factor(dayinfectious))) +
-   geom_ggplot(df_res, aes(x=factor(freqtest), y=infected_end, color=factor(dayinfectious))) +
-   geom_jitter(alpha=0.2, width = 0.15) +
-   facet_grid(vars(r0), vars(latency))bar(position = position_dodge2(preserve="single")) +
-   facet_grid(vars(freqtest), vars(r0))
-
-# SCATTER
-p <- ggplot(df_res, aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   #geom_jitter(alpha=0.05, width = 0.3) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   ylim(0,80) +
-   facet_grid(vars(r0), vars(latency))
-
-ggplot(df_res %>% filter(r0==4, latency==1), aes(x=factor(freqtest), y=time_to_end, fill=factor(dayinfectious))) +
-   geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-   facet_grid(cols=vars(dayinfectious))
-
-pdf("violin_time_to_end.pdf", width = 10.5, height = 7.5, pointsize = 14, paper="USr")
-print(p)
-dev.off()  
-
-p <- ggplot(df_res, aes(x=factor(freqtest), y=infected_end, fill=factor(dayinfectious))) +
-     #geom_jitter(alpha=0.15, width = 0.3) +
-     geom_violin(draw_quantiles = 0.5, adjust=0.8) +
-     facet_grid(vars(r0), vars(latency))
-
-pdf("violin_infected_end.pdf", width = 10.5, height = 7.5, pointsize = 14, paper="USr")
-print(p)
-dev.off()  
-
-```
-
-## Analyses
-```{r}
-# Check-up analyses to run
-## Look at day of introduction to make sure that random
-## Looking within the lag period not useful if sampling (ignorability) // Rt, rules of expectation (or some calculus/grammar)
-
 ```
