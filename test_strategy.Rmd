@@ -103,7 +103,7 @@ testStratSim <- function(nsim = 1000, n = 280, latency = 3, dayinfectious = 7, r
 
 ## Scenarios
 ```{r}
-# Base scenarios (14)
+# Base scenario with 7 test strategies
 scen1 <- tibble(qweek     = 0,
                 dayoftest = list(0 
                                 ,c(0, 7)
